@@ -1,0 +1,46 @@
+{
+  "name": "modex-backend",
+  "version": "1.0.0",
+  "description": "Modex - Ticket booking backend (Node.js + Express + PostgreSQL) — production-ready, concurrency-safe implementation",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "dev": "ts-node-dev --respawn --transpile-only --ignore-watch node_modules src/server.ts",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "migrate": "psql \"$DATABASE_URL\" -f migrations/1_init.sql",
+    "worker": "node dist/workers/expiry.worker.js",
+    "lint": "eslint --ext .ts src || true",
+    "prepare": "husky install",
+    "postinstall": "npm run build"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "pg": "^8.11.0",
+    "pino": "^8.12.0",
+    "pino-pretty": "^9.4.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.4.2",
+    "@types/pg": "^8.6.6",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.8.0",
+    "@typescript-eslint/parser": "^6.8.0",
+    "eslint": "^8.46.0",
+    "husky": "^8.0.3",
+    "rimraf": "^6.1.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR-USERNAME/modex-backend"
+  }
+}

@@ -1,0 +1,165 @@
+﻿/**
+ * src/app.ts
+ *
+ * Express application factory (production-ready)
+ * - Pino request logger
+ * - Minimal security headers (Helmet-like)
+ * - Configurable CORS
+ * - Body parsing with limits
+ * - API versioning (mount routes under /api)
+ * - Centralized error handling
+ */
+
+import express, { Request, Response, NextFunction } from 'express';
+import dotenv from 'dotenv';
+import pino from 'pino';
+import routes from './routes';
+
+dotenv.config();
+
+/* ---------------------------
+ * Logger
+ * --------------------------- */
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  transport: {
+    target: 'pino-pretty',
+    options: { colorize: true, translateTime: 'SYS:standard' }
+  }
+});
+
+/* ---------------------------
+ * Small helpers
+ * --------------------------- */
+type AsyncHandler = (req: Request, res: Response, next: NextFunction) => Promise<any>;
+
+/**
+ * Exported wrap function (use a proper function export so CommonJS interop
+ * keeps it a callable function in compiled code).
+ */
+export function wrap(fn: AsyncHandler) {
+  return (req: Request, res: Response, next: NextFunction) => fn(req, res, next).catch(next);
+}
+
+/* ---------------------------
+ * Security / CORS helpers
+ * --------------------------- */
+
+function applySecurityHeaders(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'self'");
+  next();
+}
+
+function corsMiddleware(req: Request, res: Response, next: NextFunction) {
+  const allowed = (process.env.CORS_ORIGIN && process.env.CORS_ORIGIN.split(',')) || ['*'];
+  const origin = req.headers.origin;
+  if (allowed.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+}
+
+/* ---------------------------
+ * Request logging middleware using pino
+ * --------------------------- */
+function requestLogger(req: Request, res: Response, next: NextFunction) {
+  const start = Date.now();
+  const { method, url } = req;
+  const id = `${Math.random().toString(36).substring(2, 9)}`;
+  (req as any).requestId = id;
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info({
+      id,
+      method,
+      url,
+      status: res.statusCode,
+      duration
+    }, 'request_finished');
+  });
+
+  next();
+}
+
+/* ---------------------------
+ * Error types & handler
+ * --------------------------- */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  details?: any;
+  constructor(status: number, message: string, code?: string, details?: any) {
+    super(message);
+    this.status = status || 500;
+    this.code = code;
+    this.details = details;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
+  logger.error({ err, path: req.path, method: req.method }, 'unhandled_error');
+
+  if (err instanceof ApiError) {
+    return res.status(err.status).json({
+      error: {
+        message: err.message,
+        code: err.code || 'API_ERROR',
+        details: err.details || null
+      }
+    });
+  }
+
+  return res.status(500).json({
+    error: {
+      message: 'Internal Server Error',
+      code: 'INTERNAL_ERROR'
+    }
+  });
+}
+
+/* ---------------------------
+ * Application Factory
+ * --------------------------- */
+export function createApp() {
+  const app = express();
+
+  app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
+  app.use(express.json({ limit: '100kb' }));
+  app.use(express.urlencoded({ extended: true }));
+  app.use(requestLogger);
+  app.use(applySecurityHeaders);
+  app.use(corsMiddleware);
+
+  app.use('/api', routes);
+
+  app.use((req: Request, res: Response) => {
+    res.status(404).json({ error: { message: 'Not Found', code: 'NOT_FOUND' } });
+  });
+
+  app.use(errorHandler);
+
+  return app;
+}
+
+const app = createApp();
+export default app;
+export { logger };
